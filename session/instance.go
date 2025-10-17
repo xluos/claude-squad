@@ -29,8 +29,10 @@ const (
 
 // Instance is a running instance of claude code.
 type Instance struct {
-	// Title is the title of the instance.
+	// Title is the internal identifier of the instance (ASCII-safe).
 	Title string
+	// DisplayName is the user-facing display name (can contain non-ASCII characters like Chinese).
+	DisplayName string
 	// Path is the path to the workspace.
 	Path string
 	// Branch is the branch of the instance.
@@ -67,16 +69,17 @@ type Instance struct {
 // ToInstanceData converts an Instance to its serializable form
 func (i *Instance) ToInstanceData() InstanceData {
 	data := InstanceData{
-		Title:     i.Title,
-		Path:      i.Path,
-		Branch:    i.Branch,
-		Status:    i.Status,
-		Height:    i.Height,
-		Width:     i.Width,
-		CreatedAt: i.CreatedAt,
-		UpdatedAt: time.Now(),
-		Program:   i.Program,
-		AutoYes:   i.AutoYes,
+		Title:       i.Title,
+		DisplayName: i.DisplayName,
+		Path:        i.Path,
+		Branch:      i.Branch,
+		Status:      i.Status,
+		Height:      i.Height,
+		Width:       i.Width,
+		CreatedAt:   i.CreatedAt,
+		UpdatedAt:   time.Now(),
+		Program:     i.Program,
+		AutoYes:     i.AutoYes,
 	}
 
 	// Only include worktree data if gitWorktree is initialized
@@ -105,15 +108,16 @@ func (i *Instance) ToInstanceData() InstanceData {
 // FromInstanceData creates a new Instance from serialized data
 func FromInstanceData(data InstanceData) (*Instance, error) {
 	instance := &Instance{
-		Title:     data.Title,
-		Path:      data.Path,
-		Branch:    data.Branch,
-		Status:    data.Status,
-		Height:    data.Height,
-		Width:     data.Width,
-		CreatedAt: data.CreatedAt,
-		UpdatedAt: data.UpdatedAt,
-		Program:   data.Program,
+		Title:       data.Title,
+		DisplayName: data.DisplayName,
+		Path:        data.Path,
+		Branch:      data.Branch,
+		Status:      data.Status,
+		Height:      data.Height,
+		Width:       data.Width,
+		CreatedAt:   data.CreatedAt,
+		UpdatedAt:   data.UpdatedAt,
+		Program:     data.Program,
 		gitWorktree: git.NewGitWorktreeFromStorage(
 			data.Worktree.RepoPath,
 			data.Worktree.WorktreePath,
@@ -126,6 +130,11 @@ func FromInstanceData(data InstanceData) (*Instance, error) {
 			Removed: data.DiffStats.Removed,
 			Content: data.DiffStats.Content,
 		},
+	}
+
+	// Backward compatibility: if DisplayName is empty, use Title
+	if instance.DisplayName == "" {
+		instance.DisplayName = instance.Title
 	}
 
 	if instance.Paused() {
@@ -162,15 +171,16 @@ func NewInstance(opts InstanceOptions) (*Instance, error) {
 	}
 
 	return &Instance{
-		Title:     opts.Title,
-		Status:    Ready,
-		Path:      absPath,
-		Program:   opts.Program,
-		Height:    0,
-		Width:     0,
-		CreatedAt: t,
-		UpdatedAt: t,
-		AutoYes:   false,
+		Title:       opts.Title,
+		DisplayName: opts.Title, // Initially, DisplayName equals Title
+		Status:      Ready,
+		Path:        absPath,
+		Program:     opts.Program,
+		Height:      0,
+		Width:       0,
+		CreatedAt:   t,
+		UpdatedAt:   t,
+		AutoYes:     false,
 	}, nil
 }
 

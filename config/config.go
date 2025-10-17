@@ -26,6 +26,18 @@ func GetConfigDir() (string, error) {
 	return filepath.Join(homeDir, ".claude-squad"), nil
 }
 
+// LLMConfig represents the configuration for LLM translation service
+type LLMConfig struct {
+	// APIKey is the API key for the LLM service
+	APIKey string `json:"api_key,omitempty"`
+	// Model is the model name to use
+	Model string `json:"model,omitempty"`
+	// BaseURL is the base URL for the LLM API
+	BaseURL string `json:"base_url,omitempty"`
+	// Enabled controls whether LLM translation is enabled
+	Enabled bool `json:"enabled"`
+}
+
 // Config represents the application configuration
 type Config struct {
 	// DefaultProgram is the default program to run in new instances
@@ -36,6 +48,8 @@ type Config struct {
 	DaemonPollInterval int `json:"daemon_poll_interval"`
 	// BranchPrefix is the prefix used for git branches created by the application.
 	BranchPrefix string `json:"branch_prefix"`
+	// LLM is the configuration for LLM translation service
+	LLM LLMConfig `json:"llm"`
 }
 
 // DefaultConfig returns the default configuration
@@ -58,6 +72,12 @@ func DefaultConfig() *Config {
 			}
 			return fmt.Sprintf("%s/", strings.ToLower(user.Username))
 		}(),
+		LLM: LLMConfig{
+			Enabled: false, // Disabled by default, users need to configure
+			APIKey:  "",
+			Model:   "",
+			BaseURL: "",
+		},
 	}
 }
 
@@ -136,6 +156,11 @@ func LoadConfig() *Config {
 	if err := json.Unmarshal(data, &config); err != nil {
 		log.ErrorLog.Printf("failed to parse config file: %v", err)
 		return DefaultConfig()
+	}
+
+	// Ensure LLM config has default values if not set
+	if config.LLM.Model == "" && config.LLM.Enabled {
+		config.LLM.Enabled = false
 	}
 
 	return &config

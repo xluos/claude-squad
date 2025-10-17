@@ -138,7 +138,10 @@ func (r *InstanceRenderer) Render(i *session.Instance, idx int, selected bool, h
 	}
 
 	// Cut the title if it's too long
-	titleText := i.Title
+	titleText := i.DisplayName
+	if titleText == "" {
+		titleText = i.Title // Backward compatibility
+	}
 	widthAvail := r.width - 3 - len(prefix) - 1
 	if widthAvail > 0 && widthAvail < len(titleText) && len(titleText) >= widthAvail-3 {
 		titleText = titleText[:widthAvail-3] + "..."

@@ -5,6 +5,7 @@ import (
 	"claude-squad/keys"
 	"claude-squad/log"
 	"claude-squad/session"
+	"claude-squad/session/llm"
 	"claude-squad/ui"
 	"claude-squad/ui/overlay"
 	"context"
@@ -330,6 +331,27 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 				return m, m.handleError(fmt.Errorf("title cannot be empty"))
 			}
 
+			userInput := instance.Title
+
+			// Check if the input contains non-ASCII characters (e.g., Chinese)
+			if llm.HasNonASCII(userInput) {
+				// Translate to English identifier using LLM
+				internalID, err := llm.TranslateToEnglishID(userInput)
+				if err != nil {
+					// Fallback to timestamp-based identifier
+					log.WarningLog.Printf("LLM translation failed: %v, using fallback", err)
+					internalID = fmt.Sprintf("session-%d", time.Now().Unix())
+				}
+				// Set DisplayName to user input and Title to generated identifier
+				instance.DisplayName = userInput
+				if err := instance.SetTitle(internalID); err != nil {
+					return m, m.handleError(err)
+				}
+			} else {
+				// Pure ASCII input, both DisplayName and Title are the same
+				instance.DisplayName = userInput
+			}
+
 			if err := instance.Start(true); err != nil {
 				m.list.Kill()
 				m.state = stateDefault
@@ -543,7 +565,11 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 			}
 
 			if checkedOut {
-				return fmt.Errorf("instance %s is currently checked out", selected.Title)
+				displayName := selected.DisplayName
+				if displayName == "" {
+					displayName = selected.Title
+				}
+				return fmt.Errorf("instance %s is currently checked out", displayName)
 			}
 
 			// Delete from storage first
@@ -557,7 +583,11 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		}
 
 		// Show confirmation modal
-		message := fmt.Sprintf("[!] Kill session '%s'?", selected.Title)
+		displayName := selected.DisplayName
+		if displayName == "" {
+			displayName = selected.Title
+		}
+		message := fmt.Sprintf("[!] Kill session '%s'?", displayName)
 		return m, m.confirmAction(message, killAction)
 	case keys.KeySubmit:
 		selected := m.list.GetSelectedInstance()
@@ -567,8 +597,12 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 
 		// Create the push action as a tea.Cmd
 		pushAction := func() tea.Msg {
+			displayName := selected.DisplayName
+			if displayName == "" {
+				displayName = selected.Title
+			}
 			// Default commit message with timestamp
-			commitMsg := fmt.Sprintf("[claudesquad] update from '%s' on %s", selected.Title, time.Now().Format(time.RFC822))
+			commitMsg := fmt.Sprintf("[claudesquad] update from '%s' on %s", displayName, time.Now().Format(time.RFC822))
 			worktree, err := selected.GetGitWorktree()
 			if err != nil {
 				return err
@@ -580,7 +614,11 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		}
 
 		// Show confirmation modal
-		message := fmt.Sprintf("[!] Push changes from session '%s'?", selected.Title)
+		displayName := selected.DisplayName
+		if displayName == "" {
+			displayName = selected.Title
+		}
+		message := fmt.Sprintf("[!] Push changes from session '%s'?", displayName)
 		return m, m.confirmAction(message, pushAction)
 	case keys.KeyCheckout:
 		selected := m.list.GetSelectedInstance()
