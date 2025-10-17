@@ -392,7 +392,9 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 			if len(instance.Title) == 0 {
 				return m, nil
 			}
-			if err := instance.SetTitle(instance.Title[:len(instance.Title)-1]); err != nil {
+			// Convert to rune slice to properly handle UTF-8 multi-byte characters (e.g., Chinese)
+			runes := []rune(instance.Title)
+			if err := instance.SetTitle(string(runes[:len(runes)-1])); err != nil {
 				return m, m.handleError(err)
 			}
 		case tea.KeySpace:
