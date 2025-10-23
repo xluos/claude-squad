@@ -20,6 +20,9 @@ const (
 type APIRequest struct {
 	Model    string    `json:"model"`
 	Messages []Message `json:"messages"`
+	Stream   bool      `json:"stream"`
+	Temperature float32   `json:"temperature,omitempty"`
+	EnableThinking bool      `json:"enable_thinking,omitempty"`
 }
 
 // Message represents a chat message
@@ -74,7 +77,9 @@ func TranslateToEnglishID(chineseName string) (string, error) {
 
 	// Prepare request body
 	requestBody := APIRequest{
-		Model: cfg.LLM.Model,
+		Model:  cfg.LLM.Model,
+		Stream: cfg.LLM.Stream, // Use configured stream setting
+		EnableThinking: cfg.LLM.EnableThinking,
 		Messages: []Message{
 			{
 				Role:    "user",
@@ -97,9 +102,15 @@ func TranslateToEnglishID(chineseName string) (string, error) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", cfg.LLM.APIKey))
 
+	// Determine timeout value: use configured value if > 0, otherwise use default
+	timeout := DefaultTimeout
+	if cfg.LLM.Timeout > 0 {
+		timeout = time.Duration(cfg.LLM.Timeout) * time.Second
+	}
+
 	// Make the request with timeout
 	client := &http.Client{
-		Timeout: DefaultTimeout,
+		Timeout: timeout,
 	}
 
 	resp, err := client.Do(req)

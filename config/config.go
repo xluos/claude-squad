@@ -36,6 +36,11 @@ type LLMConfig struct {
 	BaseURL string `json:"base_url,omitempty"`
 	// Enabled controls whether LLM translation is enabled
 	Enabled bool `json:"enabled"`
+	// Timeout is the request timeout in seconds (default: 30)
+	Timeout int `json:"timeout,omitempty"`
+	// Stream controls whether to use streaming mode (default: false)
+	Stream bool `json:"stream,omitempty"`
+	EnableThinking bool `json:"enable_thinking,omitempty"`
 }
 
 // Config represents the application configuration
@@ -77,6 +82,9 @@ func DefaultConfig() *Config {
 			APIKey:  "",
 			Model:   "",
 			BaseURL: "",
+			Timeout: 30,    // Default 30 seconds timeout
+			Stream:  false, // Disable streaming by default
+			EnableThinking: false,
 		},
 	}
 }
