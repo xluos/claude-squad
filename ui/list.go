@@ -130,6 +130,8 @@ func (r *InstanceRenderer) Render(i *session.Instance, idx int, selected bool, h
 	switch i.Status {
 	case session.Running:
 		join = fmt.Sprintf("%s ", r.spinner.View())
+	case session.Translating:
+		join = fmt.Sprintf("%s ", r.spinner.View())
 	case session.Ready:
 		join = readyStyle.Render(readyIcon)
 	case session.Paused:

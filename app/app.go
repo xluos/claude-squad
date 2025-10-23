@@ -249,6 +249,50 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case instanceChangedMsg:
 		// Handle instance changed after confirmation action
 		return m, m.instanceChanged()
+	case translationCompleteMsg:
+		// Handle translation completion
+		instances := m.list.GetInstances()
+		if msg.instanceIdx >= 0 && msg.instanceIdx < len(instances) {
+			instance := instances[msg.instanceIdx]
+
+			// Set the translated title
+			if err := instance.SetTitle(msg.translatedID); err != nil {
+				return m, m.handleError(err)
+			}
+
+			// Start the instance
+			if err := instance.Start(true); err != nil {
+				m.list.Kill()
+				m.state = stateDefault
+				return m, m.handleError(err)
+			}
+
+			// Save after adding new instance
+			if err := m.storage.SaveInstances(m.list.GetInstances()); err != nil {
+				return m, m.handleError(err)
+			}
+
+			// Instance added successfully, call the finalizer
+			m.newInstanceFinalizer()
+			if m.autoYes {
+				instance.AutoYes = true
+			}
+
+			m.state = stateDefault
+			if m.promptAfterName {
+				m.state = statePrompt
+				m.menu.SetState(ui.StatePrompt)
+				// Initialize the text input overlay
+				m.textInputOverlay = overlay.NewTextInputOverlay("Enter prompt", "")
+				m.promptAfterName = false
+			} else {
+				m.menu.SetState(ui.StateDefault)
+				m.showHelpScreen(helpStart(instance), nil)
+			}
+
+			return m, tea.Batch(tea.WindowSize(), m.instanceChanged())
+		}
+		return m, nil
 	case spinner.TickMsg:
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
@@ -335,18 +379,13 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 
 			// Check if the input contains non-ASCII characters (e.g., Chinese)
 			if llm.HasNonASCII(userInput) {
-				// Translate to English identifier using LLM
-				internalID, err := llm.TranslateToEnglishID(userInput)
-				if err != nil {
-					// Fallback to timestamp-based identifier
-					log.WarningLog.Printf("LLM translation failed: %v, using fallback", err)
-					internalID = fmt.Sprintf("session-%d", time.Now().Unix())
-				}
-				// Set DisplayName to user input and Title to generated identifier
+				// Set DisplayName to user input
 				instance.DisplayName = userInput
-				if err := instance.SetTitle(internalID); err != nil {
-					return m, m.handleError(err)
-				}
+				// Set status to Translating to show spinner
+				instance.SetStatus(session.Translating)
+				// Start async translation
+				instanceIdx := m.list.NumInstances() - 1
+				return m, m.translateToEnglishCmd(instanceIdx, userInput)
 			} else {
 				// Pure ASCII input, both DisplayName and Title are the same
 				instance.DisplayName = userInput
@@ -712,6 +751,13 @@ type tickUpdateMetadataMessage struct{}
 
 type instanceChangedMsg struct{}
 
+// translationCompleteMsg is sent when LLM translation completes
+type translationCompleteMsg struct {
+	instanceIdx int
+	translatedID string
+	err error
+}
+
 // tickUpdateMetadataCmd is the callback to update the metadata of the instances every 500ms. Note that we iterate
 // overall the instances and capture their output. It's a pretty expensive operation. Let's do it 2x a second only.
 var tickUpdateMetadataCmd = func() tea.Msg {
@@ -731,6 +777,23 @@ func (m *home) handleError(err error) tea.Cmd {
 		}
 
 		return hideErrMsg{}
+	}
+}
+
+// translateToEnglishCmd creates a tea.Cmd that asynchronously translates a name to English
+func (m *home) translateToEnglishCmd(instanceIdx int, chineseName string) tea.Cmd {
+	return func() tea.Msg {
+		translatedID, err := llm.TranslateToEnglishID(chineseName)
+		if err != nil {
+			// Fallback to timestamp-based identifier
+			log.WarningLog.Printf("LLM translation failed: %v, using fallback", err)
+			translatedID = fmt.Sprintf("session-%d", time.Now().Unix())
+		}
+		return translationCompleteMsg{
+			instanceIdx: instanceIdx,
+			translatedID: translatedID,
+			err: err,
+		}
 	}
 }
 

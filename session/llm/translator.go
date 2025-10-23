@@ -1,8 +1,10 @@
+// Package llm provides LLM integration for translating session names.
 package llm
 
 import (
 	"bytes"
 	"claude-squad/config"
+	"claude-squad/log"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,7 +15,10 @@ import (
 )
 
 const (
+	// DefaultTimeout is the default timeout for LLM API requests.
 	DefaultTimeout = 10 * time.Second
+	// MaxASCII is the maximum value for ASCII characters.
+	MaxASCII = 127
 )
 
 // APIRequest represents the request body for the LLM API
@@ -21,8 +26,8 @@ type APIRequest struct {
 	Model    string    `json:"model"`
 	Messages []Message `json:"messages"`
 	Stream   bool      `json:"stream"`
+	EnableThinking bool      `json:"enable_thinking"`
 	Temperature float32   `json:"temperature,omitempty"`
-	EnableThinking bool      `json:"enable_thinking,omitempty"`
 }
 
 // Message represents a chat message
@@ -113,7 +118,24 @@ func TranslateToEnglishID(chineseName string) (string, error) {
 		Timeout: timeout,
 	}
 
+	// Log the request body for debugging (JSON)
+	if log.InfoLog != nil {
+		// try to pretty-print; if that fails, log compact
+		var pretty bytes.Buffer
+		if err := json.Indent(&pretty, jsonData, "", "  "); err == nil {
+			log.InfoLog.Printf("LLM request body:\n%s", pretty.String())
+		} else {
+			log.InfoLog.Printf("LLM request body: %s", string(jsonData))
+		}
+	}
+
+	// Time the client.Do call
+	start := time.Now()
 	resp, err := client.Do(req)
+	elapsed := time.Since(start)
+	if log.InfoLog != nil {
+		log.InfoLog.Printf("client.Do elapsed: %s", elapsed.String())
+	}
 	if err != nil {
 		return fallback, fmt.Errorf("failed to make request: %w", err)
 	}
@@ -157,7 +179,7 @@ func TranslateToEnglishID(chineseName string) (string, error) {
 	return sanitized, nil
 }
 
-// sanitizeIdentifier ensures the identifier is safe for git branch names
+// sanitizeIdentifier ensures the identifier is safe for git branch names.
 // - Converts to lowercase
 // - Replaces spaces with hyphens
 // - Removes any characters not in [a-z0-9-_]
@@ -177,16 +199,16 @@ func sanitizeIdentifier(s string) string {
 	reDash := regexp.MustCompile(`-+`)
 	s = reDash.ReplaceAllString(s, "-")
 
-	// Trim leading/trailing hyphens
+	// Trim leading/trailing hyphens.
 	s = strings.Trim(s, "-")
 
 	return s
 }
 
-// HasNonASCII checks if a string contains non-ASCII characters
+// HasNonASCII checks if a string contains non-ASCII characters.
 func HasNonASCII(s string) bool {
 	for _, r := range s {
-		if r > 127 {
+		if r > MaxASCII {
 			return true
 		}
 	}

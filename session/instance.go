@@ -23,6 +23,8 @@ const (
 	Ready
 	// Loading is if the instance is loading (if we are starting it up or something).
 	Loading
+	// Translating is when the instance name is being translated by LLM.
+	Translating
 	// Paused is if the instance is paused (worktree removed but branch preserved).
 	Paused
 )
