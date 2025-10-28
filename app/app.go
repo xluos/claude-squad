@@ -260,11 +260,21 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.handleError(err)
 			}
 
-			// Start the instance
-			if err := instance.Start(true); err != nil {
+			// Start the instance asynchronously (keep Translating status to show spinner)
+			return m, m.startInstanceCmd(msg.instanceIdx, true)
+		}
+		return m, nil
+	case instanceStartCompleteMsg:
+		// Handle instance startup completion
+		instances := m.list.GetInstances()
+		if msg.instanceIdx >= 0 && msg.instanceIdx < len(instances) {
+			instance := instances[msg.instanceIdx]
+
+			// Check if startup failed
+			if msg.err != nil {
 				m.list.Kill()
 				m.state = stateDefault
-				return m, m.handleError(err)
+				return m, m.handleError(msg.err)
 			}
 
 			// Save after adding new instance
@@ -758,6 +768,12 @@ type translationCompleteMsg struct {
 	err error
 }
 
+// instanceStartCompleteMsg is sent when instance startup completes
+type instanceStartCompleteMsg struct {
+	instanceIdx int
+	err error
+}
+
 // tickUpdateMetadataCmd is the callback to update the metadata of the instances every 500ms. Note that we iterate
 // overall the instances and capture their output. It's a pretty expensive operation. Let's do it 2x a second only.
 var tickUpdateMetadataCmd = func() tea.Msg {
@@ -792,6 +808,27 @@ func (m *home) translateToEnglishCmd(instanceIdx int, chineseName string) tea.Cm
 		return translationCompleteMsg{
 			instanceIdx: instanceIdx,
 			translatedID: translatedID,
+			err: err,
+		}
+	}
+}
+
+// startInstanceCmd creates a tea.Cmd that asynchronously starts an instance
+func (m *home) startInstanceCmd(instanceIdx int, firstTimeSetup bool) tea.Cmd {
+	return func() tea.Msg {
+		instances := m.list.GetInstances()
+		if instanceIdx < 0 || instanceIdx >= len(instances) {
+			return instanceStartCompleteMsg{
+				instanceIdx: instanceIdx,
+				err: fmt.Errorf("invalid instance index: %d", instanceIdx),
+			}
+		}
+
+		instance := instances[instanceIdx]
+		err := instance.Start(firstTimeSetup)
+
+		return instanceStartCompleteMsg{
+			instanceIdx: instanceIdx,
 			err: err,
 		}
 	}
