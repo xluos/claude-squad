@@ -150,11 +150,16 @@ func (t *TmuxSession) Start(workDir string) error {
 	}
 
 	if strings.HasSuffix(t.program, ProgramClaude) || strings.HasSuffix(t.program, ProgramAider) || strings.HasSuffix(t.program, ProgramGemini) {
-		searchString := "Do you trust the files in this folder?"
+		// Multiple possible trust prompts for different Claude versions
+		searchStrings := []string{
+			"Do you trust the files in this folder?",               // Old version
+			"Quick safety check: Is this a project you created",    // New version
+			"Yes, I trust this folder",                             // New version option text
+		}
 		tapFunc := t.TapEnter
 		maxWaitTime := 30 * time.Second // Much longer timeout for slower systems
 		if !strings.HasSuffix(t.program, ProgramClaude) {
-			searchString = "Open documentation url for more info"
+			searchStrings = []string{"Open documentation url for more info"}
 			tapFunc = t.TapDAndEnter
 			maxWaitTime = 45 * time.Second // Aider/Gemini take longer to start
 		}
@@ -165,6 +170,8 @@ func (t *TmuxSession) Start(workDir string) error {
 		sleepDuration := 100 * time.Millisecond
 		attempt := 0
 
+		log.InfoLog.Printf("[PERF] Waiting for Claude trust prompt (searching for: %v)", searchStrings)
+
 		for time.Since(startTime) < maxWaitTime {
 			attempt++
 			time.Sleep(sleepDuration)
@@ -172,10 +179,24 @@ func (t *TmuxSession) Start(workDir string) error {
 			if err != nil {
 				// Session might not be ready yet, continue waiting
 			} else {
-				if strings.Contains(content, searchString) {
-					if err := tapFunc(); err != nil {
-						log.ErrorLog.Printf("could not tap enter on trust screen: %v", err)
+				// Log content periodically for debugging
+				if attempt%20 == 1 {
+					log.InfoLog.Printf("[PERF] Tmux content sample (attempt %d): %.200s", attempt, content)
+				}
+
+				// Check all possible search strings
+				found := false
+				for _, searchString := range searchStrings {
+					if strings.Contains(content, searchString) {
+						log.InfoLog.Printf("[PERF] Found trust prompt with string: '%s' after %v", searchString, time.Since(startTime))
+						if err := tapFunc(); err != nil {
+							log.ErrorLog.Printf("could not tap enter on trust screen: %v", err)
+						}
+						found = true
+						break
 					}
+				}
+				if found {
 					break
 				}
 			}
@@ -185,6 +206,10 @@ func (t *TmuxSession) Start(workDir string) error {
 			if sleepDuration > time.Second {
 				sleepDuration = time.Second
 			}
+		}
+
+		if time.Since(startTime) >= maxWaitTime {
+			log.WarningLog.Printf("[PERF] Timed out waiting for trust prompt after %v", maxWaitTime)
 		}
 	}
 	return nil

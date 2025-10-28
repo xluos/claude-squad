@@ -199,6 +199,9 @@ func (i *Instance) SetStatus(status Status) {
 
 // firstTimeSetup is true if this is a new instance. Otherwise, it's one loaded from storage.
 func (i *Instance) Start(firstTimeSetup bool) error {
+	log.InfoLog.Printf("[PERF] instance.Start() called for '%s' (firstTimeSetup: %v)", i.Title, firstTimeSetup)
+	startTotal := time.Now()
+
 	if i.Title == "" {
 		return fmt.Errorf("instance title cannot be empty")
 	}
@@ -209,12 +212,20 @@ func (i *Instance) Start(firstTimeSetup bool) error {
 		tmuxSession = i.tmuxSession
 	} else {
 		// Create new tmux session
+		log.InfoLog.Printf("[PERF] Creating new tmux session object for '%s'", i.Title)
 		tmuxSession = tmux.NewTmuxSession(i.Title, i.Program)
 	}
 	i.tmuxSession = tmuxSession
 
 	if firstTimeSetup {
+		log.InfoLog.Printf("[PERF] Starting git worktree creation for '%s'", i.Title)
+		startGit := time.Now()
+
 		gitWorktree, branchName, err := git.NewGitWorktree(i.Path, i.Title)
+
+		elapsedGit := time.Since(startGit)
+		log.InfoLog.Printf("[PERF] Git worktree creation completed in %v (error: %v)", elapsedGit, err)
+
 		if err != nil {
 			return fmt.Errorf("failed to create git worktree: %w", err)
 		}
@@ -236,18 +247,33 @@ func (i *Instance) Start(firstTimeSetup bool) error {
 
 	if !firstTimeSetup {
 		// Reuse existing session
+		log.InfoLog.Printf("[PERF] Restoring existing tmux session for '%s'", i.Title)
+		startRestore := time.Now()
+
 		if err := tmuxSession.Restore(); err != nil {
 			setupErr = fmt.Errorf("failed to restore existing session: %w", err)
 			return setupErr
 		}
+
+		elapsedRestore := time.Since(startRestore)
+		log.InfoLog.Printf("[PERF] Tmux session restore completed in %v", elapsedRestore)
 	} else {
 		// Setup git worktree first
+		log.InfoLog.Printf("[PERF] Starting gitWorktree.Setup() for '%s'", i.Title)
+		startSetup := time.Now()
+
 		if err := i.gitWorktree.Setup(); err != nil {
 			setupErr = fmt.Errorf("failed to setup git worktree: %w", err)
 			return setupErr
 		}
 
+		elapsedSetup := time.Since(startSetup)
+		log.InfoLog.Printf("[PERF] gitWorktree.Setup() completed in %v", elapsedSetup)
+
 		// Create new session
+		log.InfoLog.Printf("[PERF] Starting tmuxSession.Start() for '%s'", i.Title)
+		startTmux := time.Now()
+
 		if err := i.tmuxSession.Start(i.gitWorktree.GetWorktreePath()); err != nil {
 			// Cleanup git worktree if tmux session creation fails
 			if cleanupErr := i.gitWorktree.Cleanup(); cleanupErr != nil {
@@ -256,9 +282,15 @@ func (i *Instance) Start(firstTimeSetup bool) error {
 			setupErr = fmt.Errorf("failed to start new session: %w", err)
 			return setupErr
 		}
+
+		elapsedTmux := time.Since(startTmux)
+		log.InfoLog.Printf("[PERF] tmuxSession.Start() completed in %v", elapsedTmux)
 	}
 
 	i.SetStatus(Running)
+
+	elapsedTotal := time.Since(startTotal)
+	log.InfoLog.Printf("[PERF] instance.Start() TOTAL time: %v for '%s'", elapsedTotal, i.Title)
 
 	return nil
 }

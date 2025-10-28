@@ -251,6 +251,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.instanceChanged()
 	case translationCompleteMsg:
 		// Handle translation completion
+		log.InfoLog.Printf("[PERF] Translation completed for instance #%d, translated to '%s'", msg.instanceIdx, msg.translatedID)
 		instances := m.list.GetInstances()
 		if msg.instanceIdx >= 0 && msg.instanceIdx < len(instances) {
 			instance := instances[msg.instanceIdx]
@@ -260,12 +261,14 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.handleError(err)
 			}
 
+			log.InfoLog.Printf("[PERF] Starting async instance startup for '%s'", msg.translatedID)
 			// Start the instance asynchronously (keep Translating status to show spinner)
 			return m, m.startInstanceCmd(msg.instanceIdx, true)
 		}
 		return m, nil
 	case instanceStartCompleteMsg:
 		// Handle instance startup completion
+		log.InfoLog.Printf("[PERF] Instance startup completed for instance #%d (error: %v)", msg.instanceIdx, msg.err)
 		instances := m.list.GetInstances()
 		if msg.instanceIdx >= 0 && msg.instanceIdx < len(instances) {
 			instance := instances[msg.instanceIdx]
@@ -381,6 +384,8 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		switch msg.Type {
 		// Start the instance (enable previews etc) and go back to the main menu state.
 		case tea.KeyEnter:
+			log.InfoLog.Printf("[PERF] User pressed Enter to create instance, starting creation flow")
+
 			if len(instance.Title) == 0 {
 				return m, m.handleError(fmt.Errorf("title cannot be empty"))
 			}
@@ -389,6 +394,7 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 
 			// Check if the input contains non-ASCII characters (e.g., Chinese)
 			if llm.HasNonASCII(userInput) {
+				log.InfoLog.Printf("[PERF] Detected non-ASCII characters in '%s', starting async translation", userInput)
 				// Set DisplayName to user input
 				instance.DisplayName = userInput
 				// Set status to Translating to show spinner
@@ -398,9 +404,11 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 				return m, m.translateToEnglishCmd(instanceIdx, userInput)
 			} else {
 				// Pure ASCII input, both DisplayName and Title are the same
+				log.InfoLog.Printf("[PERF] Pure ASCII input '%s', starting instance directly (sync)", userInput)
 				instance.DisplayName = userInput
 			}
 
+			log.InfoLog.Printf("[PERF] Starting instance '%s' synchronously", instance.Title)
 			if err := instance.Start(true); err != nil {
 				m.list.Kill()
 				m.state = stateDefault
@@ -799,7 +807,14 @@ func (m *home) handleError(err error) tea.Cmd {
 // translateToEnglishCmd creates a tea.Cmd that asynchronously translates a name to English
 func (m *home) translateToEnglishCmd(instanceIdx int, chineseName string) tea.Cmd {
 	return func() tea.Msg {
+		log.InfoLog.Printf("[PERF] Starting LLM translation for '%s'", chineseName)
+		start := time.Now()
+
 		translatedID, err := llm.TranslateToEnglishID(chineseName)
+
+		elapsed := time.Since(start)
+		log.InfoLog.Printf("[PERF] LLM translation completed in %v (result: '%s', error: %v)", elapsed, translatedID, err)
+
 		if err != nil {
 			// Fallback to timestamp-based identifier
 			log.WarningLog.Printf("LLM translation failed: %v, using fallback", err)
@@ -825,7 +840,13 @@ func (m *home) startInstanceCmd(instanceIdx int, firstTimeSetup bool) tea.Cmd {
 		}
 
 		instance := instances[instanceIdx]
+		log.InfoLog.Printf("[PERF] Starting instance.Start() for '%s' (firstTimeSetup: %v)", instance.Title, firstTimeSetup)
+		start := time.Now()
+
 		err := instance.Start(firstTimeSetup)
+
+		elapsed := time.Since(start)
+		log.InfoLog.Printf("[PERF] instance.Start() completed in %v (error: %v)", elapsed, err)
 
 		return instanceStartCompleteMsg{
 			instanceIdx: instanceIdx,
