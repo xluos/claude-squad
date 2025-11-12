@@ -9,6 +9,7 @@ import (
 	"claude-squad/ui"
 	"claude-squad/ui/overlay"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"time"
@@ -53,8 +54,10 @@ type home struct {
 	program string
 	autoYes bool
 
-	// storage is the interface for saving/loading data to/from the app's state
-	storage *session.Storage
+	// instanceManager handles project-specific instance management
+	instanceManager *session.InstanceManager
+	// projectManager handles the current project's instances
+	projectManager *session.ProjectInstanceManager
 	// appConfig stores persistent application configuration
 	appConfig *config.Config
 	// appState stores persistent application state like seen help screens
@@ -98,33 +101,58 @@ func newHome(ctx context.Context, program string, autoYes bool) *home {
 	// Load application config
 	appConfig := config.LoadConfig()
 
-	// Load application state
-	appState := config.LoadState()
-
-	// Initialize storage
-	storage, err := session.NewStorage(appState)
+	// Get config directory
+	configDir, err := config.GetConfigDir()
 	if err != nil {
-		fmt.Printf("Failed to initialize storage: %v\n", err)
+		fmt.Printf("Failed to get config directory: %v\n", err)
 		os.Exit(1)
 	}
 
+	// Initialize instance manager
+	instanceManager := session.NewInstanceManager(configDir)
+
+	// Load legacy state data for migration
+	legacyState := config.LoadState()
+	var legacyInstancesData json.RawMessage
+	if legacyState != nil {
+		legacyInstancesData = legacyState.InstancesData
+	}
+
+	// Migrate legacy state if needed
+	if err = instanceManager.MigrateLegacyState(legacyInstancesData); err != nil {
+		fmt.Printf("Failed to migrate legacy state: %v\n", err)
+		// Continue anyway, this is not critical
+	}
+
+	// Get current project manager
+	projectManager, err := instanceManager.GetCurrentProjectManager()
+	if err != nil {
+		fmt.Printf("Failed to get project manager: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Load application state from global manager
+	globalManager := config.NewGlobalStateManager(configDir)
+	appState := globalManager
+
 	h := &home{
-		ctx:          ctx,
-		spinner:      spinner.New(spinner.WithSpinner(spinner.MiniDot)),
-		menu:         ui.NewMenu(),
-		tabbedWindow: ui.NewTabbedWindow(ui.NewPreviewPane(), ui.NewDiffPane()),
-		errBox:       ui.NewErrBox(),
-		storage:      storage,
-		appConfig:    appConfig,
-		program:      program,
-		autoYes:      autoYes,
-		state:        stateDefault,
-		appState:     appState,
+		ctx:             ctx,
+		spinner:         spinner.New(spinner.WithSpinner(spinner.MiniDot)),
+		menu:            ui.NewMenu(),
+		tabbedWindow:    ui.NewTabbedWindow(ui.NewPreviewPane(), ui.NewDiffPane()),
+		errBox:          ui.NewErrBox(),
+		instanceManager: instanceManager,
+		projectManager:  projectManager,
+		appConfig:       appConfig,
+		program:         program,
+		autoYes:         autoYes,
+		state:           stateDefault,
+		appState:        appState,
 	}
 	h.list = ui.NewList(&h.spinner, autoYes)
 
-	// Load saved instances
-	instances, err := storage.LoadInstances()
+	// Load saved instances for current project
+	instances, err := projectManager.GetAllInstances()
 	if err != nil {
 		fmt.Printf("Failed to load instances: %v\n", err)
 		os.Exit(1)
@@ -281,14 +309,25 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 			// Save after adding new instance
-			if err := m.storage.SaveInstances(m.list.GetInstances()); err != nil {
-				return m, m.handleError(err)
+			instances := m.list.GetInstances()
+			for _, instance := range instances {
+				if err := m.projectManager.UpdateInstance(instance); err != nil {
+					log.ErrorLog.Printf("Failed to save instance %s: %v", instance.Title, err)
+				}
 			}
 
 			// Instance added successfully, call the finalizer
 			m.newInstanceFinalizer()
 			if m.autoYes {
 				instance.AutoYes = true
+			}
+
+			// Save after adding new instance
+			instances = m.list.GetInstances()
+			for _, instance := range instances {
+				if err := m.projectManager.UpdateInstance(instance); err != nil {
+					log.ErrorLog.Printf("Failed to save instance %s: %v", instance.Title, err)
+				}
 			}
 
 			m.state = stateDefault
@@ -315,8 +354,12 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *home) handleQuit() (tea.Model, tea.Cmd) {
-	if err := m.storage.SaveInstances(m.list.GetInstances()); err != nil {
-		return m, m.handleError(err)
+	// Save all instances for current project
+	instances := m.list.GetInstances()
+	for _, instance := range instances {
+		if err := m.projectManager.UpdateInstance(instance); err != nil {
+			log.ErrorLog.Printf("Failed to save instance %s: %v", instance.Title, err)
+		}
 	}
 	return m, tea.Quit
 }
@@ -415,8 +458,11 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 				return m, m.handleError(err)
 			}
 			// Save after adding new instance
-			if err := m.storage.SaveInstances(m.list.GetInstances()); err != nil {
-				return m, m.handleError(err)
+			instances := m.list.GetInstances()
+			for _, instance := range instances {
+				if err := m.projectManager.UpdateInstance(instance); err != nil {
+					log.ErrorLog.Printf("Failed to save instance %s: %v", instance.Title, err)
+				}
 			}
 			// Instance added successfully, call the finalizer.
 			m.newInstanceFinalizer()
@@ -424,7 +470,14 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 				instance.AutoYes = true
 			}
 
-			m.newInstanceFinalizer()
+			// Save after adding new instance
+			instances = m.list.GetInstances()
+			for _, instance := range instances {
+				if err := m.projectManager.UpdateInstance(instance); err != nil {
+					log.ErrorLog.Printf("Failed to save instance %s: %v", instance.Title, err)
+				}
+			}
+
 			m.state = stateDefault
 			if m.promptAfterName {
 				m.state = statePrompt
@@ -548,9 +601,14 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 	case keys.KeyHelp:
 		return m.showHelpScreen(helpTypeGeneral{}, nil)
 	case keys.KeyPrompt:
-		if m.list.NumInstances() >= GlobalInstanceLimit {
+		// Check project instance limit
+		instances, err := m.projectManager.GetAllInstances()
+		if err != nil {
+			return m, m.handleError(fmt.Errorf("failed to check instance limit: %w", err))
+		}
+		if len(instances) >= session.ProjectInstanceLimit {
 			return m, m.handleError(
-				fmt.Errorf("you can't create more than %d instances", GlobalInstanceLimit))
+				fmt.Errorf("you can't create more than %d instances in this project", session.ProjectInstanceLimit))
 		}
 		instance, err := session.NewInstance(session.InstanceOptions{
 			Title:   "",
@@ -569,9 +627,14 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 
 		return m, nil
 	case keys.KeyNew:
-		if m.list.NumInstances() >= GlobalInstanceLimit {
+		// Check project instance limit
+		instances, err := m.projectManager.GetAllInstances()
+		if err != nil {
+			return m, m.handleError(fmt.Errorf("failed to check instance limit: %w", err))
+		}
+		if len(instances) >= session.ProjectInstanceLimit {
 			return m, m.handleError(
-				fmt.Errorf("you can't create more than %d instances", GlobalInstanceLimit))
+				fmt.Errorf("you can't create more than %d instances in this project", session.ProjectInstanceLimit))
 		}
 		instance, err := session.NewInstance(session.InstanceOptions{
 			Title:   "",
@@ -632,7 +695,7 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 			}
 
 			// Delete from storage first
-			if err := m.storage.DeleteInstance(selected.Title); err != nil {
+			if err := m.projectManager.DeleteInstance(selected.Title); err != nil {
 				return err
 			}
 
