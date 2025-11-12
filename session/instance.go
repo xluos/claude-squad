@@ -27,6 +27,8 @@ const (
 	Translating
 	// Paused is if the instance is paused (worktree removed but branch preserved).
 	Paused
+	// Error is if the instance encountered an unrecoverable error (e.g., tmux session died).
+	Error
 )
 
 // Instance is a running instance of claude code.
@@ -417,6 +419,8 @@ func (i *Instance) Pause() error {
 		return fmt.Errorf("instance is already paused")
 	}
 
+	// Store original status to restore on failure
+	originalStatus := i.Status
 	var errs []error
 
 	// Check if there are any changes to commit
@@ -430,6 +434,7 @@ func (i *Instance) Pause() error {
 			errs = append(errs, fmt.Errorf("failed to commit changes: %w", err))
 			log.ErrorLog.Print(err)
 			// Return early if we can't commit changes to avoid corrupted state
+			// Keep original status unchanged
 			return i.combineErrors(errs)
 		}
 	}
@@ -447,6 +452,8 @@ func (i *Instance) Pause() error {
 		if err := i.gitWorktree.Remove(); err != nil {
 			errs = append(errs, fmt.Errorf("failed to remove git worktree: %w", err))
 			log.ErrorLog.Print(err)
+			// Restore original status on failure
+			i.SetStatus(originalStatus)
 			return i.combineErrors(errs)
 		}
 
@@ -454,15 +461,20 @@ func (i *Instance) Pause() error {
 		if err := i.gitWorktree.Prune(); err != nil {
 			errs = append(errs, fmt.Errorf("failed to prune git worktrees: %w", err))
 			log.ErrorLog.Print(err)
+			// Restore original status on failure
+			i.SetStatus(originalStatus)
 			return i.combineErrors(errs)
 		}
 	}
 
 	if err := i.combineErrors(errs); err != nil {
 		log.ErrorLog.Print(err)
+		// Restore original status on any failure
+		i.SetStatus(originalStatus)
 		return err
 	}
 
+	// Only set to Paused if all operations succeeded
 	i.SetStatus(Paused)
 	_ = clipboard.WriteAll(i.gitWorktree.GetBranchName())
 	return nil
@@ -473,8 +485,40 @@ func (i *Instance) Resume() error {
 	if !i.started {
 		return fmt.Errorf("cannot resume instance that has not been started")
 	}
-	if i.Status != Paused {
-		return fmt.Errorf("can only resume paused instances")
+
+	// Allow resuming from Paused or Error status
+	// Also detect inconsistent state and provide helpful error messages
+	if i.Status != Paused && i.Status != Error {
+		// Check if we're in an inconsistent state that might be recoverable
+		worktreeExists := false
+		if _, err := os.Stat(i.gitWorktree.GetWorktreePath()); err == nil {
+			worktreeExists = true
+		}
+
+		tmuxExists := i.tmuxSession.DoesSessionExist()
+
+		// If worktree doesn't exist but we're not paused, this might be a failed pause operation
+		if !worktreeExists && !tmuxExists {
+			// This looks like a partially paused instance, allow resume to fix it
+			log.InfoLog.Printf("Detected inconsistent state (status=%v, worktree=%v, tmux=%v), attempting to recover by setting to Paused",
+				i.Status, worktreeExists, tmuxExists)
+			i.SetStatus(Paused)
+		} else if worktreeExists && !tmuxExists && i.Status == Error {
+			// Error state with worktree but no tmux - try to restart tmux only
+			log.InfoLog.Printf("Attempting to recover from Error state by restarting tmux")
+			if err := i.RestartTmux(); err != nil {
+				return fmt.Errorf("failed to recover from error state: %w", err)
+			}
+			return nil
+		} else if worktreeExists && i.Status == Running {
+			// Instance is running with worktree, this is normal
+			return fmt.Errorf("instance is already running, cannot resume")
+		} else {
+			// Unclear state, provide detailed error
+			return fmt.Errorf("cannot resume from current state (status=%v, worktree exists=%v, tmux exists=%v). "+
+				"Try pausing first or check the instance status",
+				i.Status, worktreeExists, tmuxExists)
+		}
 	}
 
 	// Check if branch is checked out
@@ -521,6 +565,36 @@ func (i *Instance) Resume() error {
 	}
 
 	i.SetStatus(Running)
+	return nil
+}
+
+// RestartTmux attempts to restart the tmux session without recreating the worktree
+func (i *Instance) RestartTmux() error {
+	if !i.started {
+		return fmt.Errorf("cannot restart tmux for instance that has not been started")
+	}
+
+	// If tmux is already alive, nothing to do
+	if i.tmuxSession.DoesSessionExist() {
+		return nil
+	}
+
+	// Check if worktree still exists
+	if _, err := os.Stat(i.gitWorktree.GetWorktreePath()); err != nil {
+		return fmt.Errorf("cannot restart tmux: worktree does not exist at %s", i.gitWorktree.GetWorktreePath())
+	}
+
+	// Create new tmux session with the existing worktree
+	if err := i.tmuxSession.Start(i.gitWorktree.GetWorktreePath()); err != nil {
+		log.ErrorLog.Print(err)
+		return fmt.Errorf("failed to restart tmux session: %w", err)
+	}
+
+	// If we were in Error state and successfully restarted, restore to Running
+	if i.Status == Error {
+		i.SetStatus(Running)
+	}
+
 	return nil
 }
 

@@ -13,6 +13,7 @@ import (
 
 const readyIcon = "● "
 const pausedIcon = "⏸ "
+const errorIcon = "✗ "
 
 var readyStyle = lipgloss.NewStyle().
 	Foreground(lipgloss.AdaptiveColor{Light: "#51bd73", Dark: "#51bd73"})
@@ -25,6 +26,9 @@ var removedLinesStyle = lipgloss.NewStyle().
 
 var pausedStyle = lipgloss.NewStyle().
 	Foreground(lipgloss.AdaptiveColor{Light: "#888888", Dark: "#888888"})
+
+var errorStyle = lipgloss.NewStyle().
+	Foreground(lipgloss.AdaptiveColor{Light: "#FF0000", Dark: "#FF0000"})
 
 var titleStyle = lipgloss.NewStyle().
 	Padding(1, 1, 0, 1).
@@ -136,6 +140,8 @@ func (r *InstanceRenderer) Render(i *session.Instance, idx int, selected bool, h
 		join = readyStyle.Render(readyIcon)
 	case session.Paused:
 		join = pausedStyle.Render(pausedIcon)
+	case session.Error:
+		join = errorStyle.Render(errorIcon)
 	default:
 	}
 

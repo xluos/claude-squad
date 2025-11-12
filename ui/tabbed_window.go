@@ -128,6 +128,16 @@ func (w *TabbedWindow) ResetPreviewToNormalMode(instance *session.Instance) erro
 	return w.preview.ResetToNormalMode(instance)
 }
 
+// ResetPreviewState resets the preview pane state to initial state
+func (w *TabbedWindow) ResetPreviewState() {
+	w.preview.Reset()
+}
+
+// PreviewHasError returns true if the preview pane is in an error state
+func (w *TabbedWindow) PreviewHasError() bool {
+	return w.preview.HasError()
+}
+
 // Add these new methods for handling scroll events
 func (w *TabbedWindow) ScrollUp() {
 	if w.activeTab == PreviewTab {

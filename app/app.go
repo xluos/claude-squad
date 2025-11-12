@@ -732,6 +732,12 @@ func (m *home) instanceChanged() tea.Cmd {
 	// selected may be nil
 	selected := m.list.GetSelectedInstance()
 
+	// Smart reset: only reset preview if it's in an error state
+	// This preserves user's scroll position during normal navigation
+	if m.tabbedWindow.PreviewHasError() {
+		m.tabbedWindow.ResetPreviewState()
+	}
+
 	m.tabbedWindow.UpdateDiff(selected)
 	m.tabbedWindow.SetInstance(selected)
 	// Update menu with current instance

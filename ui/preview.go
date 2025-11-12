@@ -26,6 +26,8 @@ type previewState struct {
 	fallback bool
 	// text is the text displayed in the preview pane
 	text string
+	// hasError is true if the last update failed
+	hasError bool
 }
 
 func NewPreviewPane() *PreviewPane {
@@ -46,7 +48,30 @@ func (p *PreviewPane) setFallbackState(message string) {
 	p.previewState = previewState{
 		fallback: true,
 		text:     lipgloss.JoinVertical(lipgloss.Center, FallBackText, "", message),
+		hasError: false,
 	}
+}
+
+// setErrorState sets the preview state to display an error message
+func (p *PreviewPane) setErrorState(err error) {
+	p.previewState = previewState{
+		fallback: true,
+		text:     lipgloss.JoinVertical(lipgloss.Center, FallBackText, "", fmt.Sprintf("Error: %v", err)),
+		hasError: true,
+	}
+}
+
+// Reset clears all preview state and resets to initial state
+func (p *PreviewPane) Reset() {
+	p.previewState = previewState{}
+	p.isScrolling = false
+	p.viewport.SetContent("")
+	p.viewport.GotoTop()
+}
+
+// HasError returns true if the preview is in an error state
+func (p *PreviewPane) HasError() bool {
+	return p.previewState.hasError
 }
 
 // Updates the preview pane content with the tmux pane content
@@ -70,6 +95,18 @@ func (p *PreviewPane) UpdateContent(instance *session.Instance) error {
 				)),
 		))
 		return nil
+	case instance.Status == session.Error:
+		p.setFallbackState(lipgloss.JoinVertical(lipgloss.Center,
+			"Session encountered an error.",
+			"",
+			lipgloss.NewStyle().
+				Foreground(lipgloss.AdaptiveColor{
+					Light: "#FF0000",
+					Dark:  "#FF0000",
+				}).
+				Render("Press 'r' to attempt recovery or 'd' to delete the instance."),
+		))
+		return nil
 	}
 
 	var content string
@@ -80,7 +117,17 @@ func (p *PreviewPane) UpdateContent(instance *session.Instance) error {
 		// Capture full pane content including scrollback history using capture-pane -p -S -
 		content, err = instance.PreviewFullHistory()
 		if err != nil {
-			return err
+			// Try to recover from tmux error
+			if recoverErr := p.attemptTmuxRecovery(instance, err); recoverErr != nil {
+				p.setErrorState(recoverErr)
+				return recoverErr
+			}
+			// Recovery successful, retry
+			content, err = instance.PreviewFullHistory()
+			if err != nil {
+				p.setErrorState(err)
+				return err
+			}
 		}
 
 		// Set content in the viewport
@@ -93,7 +140,17 @@ func (p *PreviewPane) UpdateContent(instance *session.Instance) error {
 		// In normal mode, use the usual preview
 		content, err = instance.Preview()
 		if err != nil {
-			return err
+			// Try to recover from tmux error
+			if recoverErr := p.attemptTmuxRecovery(instance, err); recoverErr != nil {
+				p.setErrorState(recoverErr)
+				return recoverErr
+			}
+			// Recovery successful, retry
+			content, err = instance.Preview()
+			if err != nil {
+				p.setErrorState(err)
+				return err
+			}
 		}
 
 		// Always update the preview state with content, even if empty
@@ -105,10 +162,38 @@ func (p *PreviewPane) UpdateContent(instance *session.Instance) error {
 			p.previewState = previewState{
 				fallback: false,
 				text:     content,
+				hasError: false,
 			}
 		}
 	}
 
+	return nil
+}
+
+// attemptTmuxRecovery tries to recover from tmux errors by restarting the session
+func (p *PreviewPane) attemptTmuxRecovery(instance *session.Instance, originalErr error) error {
+	// Check if this is a tmux-related error
+	errStr := originalErr.Error()
+	if !strings.Contains(errStr, "capturing pane content") &&
+		!strings.Contains(errStr, "exit status 1") {
+		// Not a tmux error, don't attempt recovery
+		return originalErr
+	}
+
+	// Check if tmux session is still alive
+	if instance.TmuxAlive() {
+		// Tmux is alive, might be a different issue
+		return fmt.Errorf("tmux session exists but failed to capture content: %w", originalErr)
+	}
+
+	// Tmux session is dead, attempt to restart it
+	if err := instance.RestartTmux(); err != nil {
+		// Failed to restart, mark instance as Error state
+		instance.SetStatus(session.Error)
+		return fmt.Errorf("tmux session died and failed to restart: %w (original error: %v)", err, originalErr)
+	}
+
+	// Successfully restarted tmux
 	return nil
 }
 
