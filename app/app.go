@@ -152,14 +152,17 @@ func newHome(ctx context.Context, program string, autoYes bool) *home {
 	h.list = ui.NewList(&h.spinner, autoYes)
 
 	// Load saved instances for current project
+	log.InfoLog.Printf("[APP] Loading saved instances for current project...")
 	instances, err := projectManager.GetAllInstances()
 	if err != nil {
 		fmt.Printf("Failed to load instances: %v\n", err)
 		os.Exit(1)
 	}
+	log.InfoLog.Printf("[APP] Loaded %d instances for project", len(instances))
 
 	// Add loaded instances to the list
-	for _, instance := range instances {
+	for i, instance := range instances {
+		log.InfoLog.Printf("[APP] Adding instance %d: %s (DisplayName: %s)", i, instance.Title, instance.DisplayName)
 		// Call the finalizer immediately.
 		h.list.AddInstance(instance)()
 		if autoYes {
@@ -611,9 +614,10 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 				fmt.Errorf("you can't create more than %d instances in this project", session.ProjectInstanceLimit))
 		}
 		instance, err := session.NewInstance(session.InstanceOptions{
-			Title:   "",
-			Path:    ".",
-			Program: m.program,
+			Title:     "",
+			Path:      ".",
+			Program:   m.program,
+			ProjectID: m.projectManager.GetProjectID(),
 		})
 		if err != nil {
 			return m, m.handleError(err)
@@ -637,9 +641,10 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 				fmt.Errorf("you can't create more than %d instances in this project", session.ProjectInstanceLimit))
 		}
 		instance, err := session.NewInstance(session.InstanceOptions{
-			Title:   "",
-			Path:    ".",
-			Program: m.program,
+			Title:     "",
+			Path:      ".",
+			Program:   m.program,
+			ProjectID: m.projectManager.GetProjectID(),
 		})
 		if err != nil {
 			return m, m.handleError(err)

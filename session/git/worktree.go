@@ -17,6 +17,15 @@ func getWorktreeDirectory() (string, error) {
 	return filepath.Join(configDir, "worktrees"), nil
 }
 
+func getProjectWorktreeDirectory(projectID string) (string, error) {
+	configDir, err := config.GetConfigDir()
+	if err != nil {
+		return "", err
+	}
+
+	return filepath.Join(configDir, "projects", projectID, "worktrees"), nil
+}
+
 // GitWorktree manages git worktree operations for a session
 type GitWorktree struct {
 	// Path to the repository
@@ -67,6 +76,44 @@ func NewGitWorktree(repoPath string, sessionName string) (tree *GitWorktree, bra
 
 	worktreePath := filepath.Join(worktreeDir, sanitizedName)
 	worktreePath = worktreePath + "_" + fmt.Sprintf("%x", time.Now().UnixNano())
+
+	return &GitWorktree{
+		repoPath:     repoPath,
+		sessionName:  sessionName,
+		branchName:   branchName,
+		worktreePath: worktreePath,
+	}, branchName, nil
+}
+
+// NewGitWorktreeForProject creates a new GitWorktree instance for a specific project
+func NewGitWorktreeForProject(repoPath string, sessionName string, projectID string) (tree *GitWorktree, branchname string, err error) {
+	cfg := config.LoadConfig()
+	sanitizedName := sanitizeBranchName(sessionName)
+	branchName := fmt.Sprintf("%s%s", cfg.BranchPrefix, sanitizedName)
+
+	// Convert repoPath to absolute path
+	absPath, err := filepath.Abs(repoPath)
+	if err != nil {
+		log.ErrorLog.Printf("git worktree path abs error, falling back to repoPath %s: %s", repoPath, err)
+		// If we can't get absolute path, use original path as fallback
+		absPath = repoPath
+	}
+
+	repoPath, err = findGitRepoRoot(absPath)
+	if err != nil {
+		return nil, "", err
+	}
+
+	// Use project-specific worktree directory
+	worktreeDir, err := getProjectWorktreeDirectory(projectID)
+	if err != nil {
+		return nil, "", err
+	}
+
+	worktreePath := filepath.Join(worktreeDir, sanitizedName)
+	worktreePath = worktreePath + "_" + fmt.Sprintf("%x", time.Now().UnixNano())
+
+	log.InfoLog.Printf("[GIT] Creating project-specific worktree for project %s at path: %s", projectID, worktreePath)
 
 	return &GitWorktree{
 		repoPath:     repoPath,

@@ -1,6 +1,7 @@
 package session
 
 import (
+	"claude-squad/log"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -94,40 +95,57 @@ func (ps *ProjectStorage) EnsureProjectDir() error {
 
 // LoadProjectState loads the project state from disk
 func (ps *ProjectStorage) LoadProjectState() (*ProjectState, error) {
+	log.InfoLog.Printf("[PROJECT-STORAGE] Loading project state for project %s", ps.projectID)
+
 	statePath := ps.GetProjectStatePath()
+	log.InfoLog.Printf("[PROJECT-STORAGE] State file path: %s", statePath)
+
 	data, err := os.ReadFile(statePath)
 	if err != nil {
 		if os.IsNotExist(err) {
+			log.InfoLog.Printf("[PROJECT-STORAGE] State file not found, returning default state")
 			// Return default state if file doesn't exist
 			return ps.DefaultProjectState(), nil
 		}
 		return nil, fmt.Errorf("failed to read project state: %w", err)
 	}
 
+	log.InfoLog.Printf("[PROJECT-STORAGE] Successfully read state file, size: %d bytes", len(data))
+
 	var state ProjectState
 	if err := json.Unmarshal(data, &state); err != nil {
 		return nil, fmt.Errorf("failed to parse project state: %w", err)
 	}
+
+	log.InfoLog.Printf("[PROJECT-STORAGE] Parsed state: Project=%s, Instances=%d",
+		state.Project.Name, len(state.Instances))
 
 	return &state, nil
 }
 
 // SaveProjectState saves the project state to disk
 func (ps *ProjectStorage) SaveProjectState(state *ProjectState) error {
+	log.InfoLog.Printf("[PROJECT-STORAGE] SaveProjectState called for project %s", ps.projectID)
+
 	if err := ps.EnsureProjectDir(); err != nil {
 		return err
 	}
 
 	statePath := ps.GetProjectStatePath()
+	log.InfoLog.Printf("[PROJECT-STORAGE] Saving to path: %s", statePath)
+
 	data, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal project state: %w", err)
 	}
 
+	log.InfoLog.Printf("[PROJECT-STORAGE] Writing %d bytes to state file", len(data))
+
 	if err := os.WriteFile(statePath, data, 0644); err != nil {
 		return fmt.Errorf("failed to write project state: %w", err)
 	}
 
+	log.InfoLog.Printf("[PROJECT-STORAGE] Successfully saved project state")
 	return nil
 }
 
@@ -149,17 +167,25 @@ func (ps *ProjectStorage) DefaultProjectState() *ProjectState {
 
 // GetInstances loads all instances for this project
 func (ps *ProjectStorage) GetInstances() ([]InstanceData, error) {
+	log.InfoLog.Printf("[PROJECT-STORAGE] GetInstances called for project %s", ps.projectID)
+
 	state, err := ps.LoadProjectState()
 	if err != nil {
+		log.InfoLog.Printf("[PROJECT-STORAGE] Failed to load project state: %v", err)
 		return nil, err
 	}
+
+	log.InfoLog.Printf("[PROJECT-STORAGE] Returning %d instances for project %s", len(state.Instances), ps.projectID)
 	return state.Instances, nil
 }
 
 // SaveInstances saves all instances for this project
 func (ps *ProjectStorage) SaveInstances(instances []InstanceData) error {
+	log.InfoLog.Printf("[PROJECT-STORAGE] SaveInstances called for project %s with %d instances", ps.projectID, len(instances))
+
 	state, err := ps.LoadProjectState()
 	if err != nil {
+		log.InfoLog.Printf("[PROJECT-STORAGE] Failed to load project state: %v", err)
 		return err
 	}
 
@@ -167,6 +193,7 @@ func (ps *ProjectStorage) SaveInstances(instances []InstanceData) error {
 	state.Project.InstanceCount = len(instances)
 	state.Project.UpdatedAt = time.Now()
 
+	log.InfoLog.Printf("[PROJECT-STORAGE] Saving %d instances for project %s", len(instances), ps.projectID)
 	return ps.SaveProjectState(state)
 }
 

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/go-git/go-git/v5"
 )
@@ -31,6 +32,9 @@ func NewProjectInstanceManager(projectID, repoPath string, configDir string) *Pr
 
 // CreateInstance creates a new instance within the project
 func (pm *ProjectInstanceManager) CreateInstance(opts InstanceOptions) (*Instance, error) {
+	// Set the project ID
+	opts.ProjectID = pm.projectID
+
 	// Check instance limit
 	instances, err := pm.GetAllInstances()
 	if err != nil {
@@ -70,21 +74,29 @@ func (pm *ProjectInstanceManager) CreateInstance(opts InstanceOptions) (*Instanc
 
 // GetAllInstances returns all instances for this project
 func (pm *ProjectInstanceManager) GetAllInstances() ([]*Instance, error) {
+	log.InfoLog.Printf("[PROJECT-MANAGER] GetAllInstances called for project %s", pm.projectID)
+
 	instancesData, err := pm.projectStorage.GetInstances()
 	if err != nil {
+		log.ErrorLog.Printf("[PROJECT-MANAGER] Failed to load instances data: %v", err)
 		return nil, fmt.Errorf("failed to load instances data: %w", err)
 	}
 
+	log.InfoLog.Printf("[PROJECT-MANAGER] Loaded %d instances data entries", len(instancesData))
+
 	instances := make([]*Instance, 0, len(instancesData))
-	for _, data := range instancesData {
+	for i, data := range instancesData {
+		log.InfoLog.Printf("[PROJECT-MANAGER] Processing instance %d: %s", i, data.Title)
 		instance, err := FromInstanceData(data)
 		if err != nil {
-			log.ErrorLog.Printf("Failed to create instance from data: %v", err)
+			log.ErrorLog.Printf("[PROJECT-MANAGER] Failed to create instance from data: %v", err)
 			continue
 		}
 		instances = append(instances, instance)
+		log.InfoLog.Printf("[PROJECT-MANAGER] Successfully created instance: %s", instance.Title)
 	}
 
+	log.InfoLog.Printf("[PROJECT-MANAGER] Returning %d instances for project %s", len(instances), pm.projectID)
 	return instances, nil
 }
 
@@ -185,36 +197,59 @@ func (im *InstanceManager) GetProjectManager(projectID, repoPath string) *Projec
 
 // GetCurrentProjectManager returns the project manager for the current working directory
 func (im *InstanceManager) GetCurrentProjectManager() (*ProjectInstanceManager, error) {
+	log.InfoLog.Printf("[PROJECT] Starting GetCurrentProjectManager...")
+
 	// Get current working directory
 	cwd, err := os.Getwd()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get current working directory: %w", err)
 	}
+	log.InfoLog.Printf("[PROJECT] Current working directory: %s", cwd)
 
 	// Find Git repository root
 	repoPath, err := findGitRepoRootFromPath(cwd)
 	if err != nil {
 		return nil, fmt.Errorf("failed to find Git repository root: %w", err)
 	}
+	log.InfoLog.Printf("[PROJECT] Found Git repository root: %s", repoPath)
 
 	// Generate project ID
 	projectID := config.GenerateProjectID(repoPath)
+	log.InfoLog.Printf("[PROJECT] Generated project ID: %s", projectID)
 
-	// Ensure project exists in global state
+	// Check if project already exists in global state
 	projectData, err := im.globalManager.GetProject(projectID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get project: %w", err)
 	}
 
 	if projectData == nil {
+		log.InfoLog.Printf("[PROJECT] Project not found in global state, creating new project")
 		// Create new project
 		projectName := filepath.Base(repoPath)
 		if err = im.globalManager.AddProject(projectID, projectName, repoPath); err != nil {
 			return nil, fmt.Errorf("failed to add project: %w", err)
 		}
+		log.InfoLog.Printf("[PROJECT] Created new project: %s (%s)", projectName, projectID)
+	} else {
+		log.InfoLog.Printf("[PROJECT] Found existing project: %s (%s)", projectData.Name, projectID)
+		log.InfoLog.Printf("[PROJECT] Project repo path: %s", projectData.RepoPath)
+		log.InfoLog.Printf("[PROJECT] Project instance count: %d", projectData.InstanceCount)
 	}
 
-	return im.GetProjectManager(projectID, repoPath), nil
+	// Create project manager
+	projectManager := im.GetProjectManager(projectID, repoPath)
+	log.InfoLog.Printf("[PROJECT] Created project manager for project %s", projectID)
+
+	// Test loading instances to verify project state
+	instances, err := projectManager.GetAllInstances()
+	if err != nil {
+		log.InfoLog.Printf("[PROJECT] Warning: failed to load instances for project %s: %v", projectID, err)
+	} else {
+		log.InfoLog.Printf("[PROJECT] Successfully loaded %d instances for project %s", len(instances), projectID)
+	}
+
+	return projectManager, nil
 }
 
 // GetAllProjects returns all projects
@@ -224,6 +259,124 @@ func (im *InstanceManager) GetAllProjects() ([]config.GlobalProjectData, error) 
 
 // MigrateLegacyState migrates from old state format
 func (im *InstanceManager) MigrateLegacyState(legacyInstancesData json.RawMessage) error {
+	log.InfoLog.Printf("[MIGRATION] Starting legacy state migration...")
+
+	// Parse legacy instances
+	type LegacyInstanceData struct {
+		Title       string    `json:"title"`
+		DisplayName string    `json:"display_name"`
+		Path        string    `json:"path"`
+		Branch      string    `json:"branch"`
+		Status      int       `json:"status"`
+		Height      int       `json:"height"`
+		Width       int       `json:"width"`
+		CreatedAt   time.Time `json:"created_at"`
+		UpdatedAt   time.Time `json:"updated_at"`
+		AutoYes     bool      `json:"auto_yes"`
+		Program     string    `json:"program"`
+		Worktree    struct {
+			RepoPath      string `json:"repo_path"`
+			WorktreePath  string `json:"worktree_path"`
+			SessionName   string `json:"session_name"`
+			BranchName    string `json:"branch_name"`
+			BaseCommitSHA string `json:"base_commit_sha"`
+		} `json:"worktree"`
+		DiffStats struct {
+			Added   int    `json:"added"`
+			Removed int    `json:"removed"`
+			Content string `json:"content"`
+		} `json:"diff_stats"`
+	}
+
+	var legacyInstances []LegacyInstanceData
+	if err := json.Unmarshal(legacyInstancesData, &legacyInstances); err != nil {
+		return fmt.Errorf("failed to parse legacy instances: %w", err)
+	}
+
+	if len(legacyInstances) == 0 {
+		log.InfoLog.Printf("[MIGRATION] No instances to migrate")
+		return im.globalManager.MigrateLegacyState(legacyInstancesData)
+	}
+
+	log.InfoLog.Printf("[MIGRATION] Migrating %d instances...", len(legacyInstances))
+
+	// Group instances by repository path
+	projectsByRepo := make(map[string][]LegacyInstanceData)
+	for _, instance := range legacyInstances {
+		repoPath := instance.Worktree.RepoPath
+		if repoPath == "" {
+			// Fallback to instance path if no repo path
+			repoPath = instance.Path
+		}
+		projectsByRepo[repoPath] = append(projectsByRepo[repoPath], instance)
+	}
+
+	// Create project storage for each repository
+	for repoPath, instances := range projectsByRepo {
+		projectID := config.GenerateProjectID(repoPath)
+		projectName := filepath.Base(repoPath)
+
+		log.InfoLog.Printf("[MIGRATION] Processing project %s (%s) with %d instances", projectName, projectID, len(instances))
+
+		// Add project to global state
+		if err := im.globalManager.AddProject(projectID, projectName, repoPath); err != nil {
+			log.ErrorLog.Printf("[MIGRATION] Failed to add project %s: %v", projectID, err)
+			continue
+		}
+
+		// Create project storage
+		projectStorage := NewProjectStorage(im.configDir, projectID, repoPath)
+		if err := projectStorage.EnsureProjectDir(); err != nil {
+			log.ErrorLog.Printf("[MIGRATION] Failed to create project directory for %s: %v", projectID, err)
+			continue
+		}
+
+		// Convert legacy instances to current format
+		currentInstances := make([]InstanceData, len(instances))
+		for i, legacyInstance := range instances {
+			currentInstances[i] = InstanceData{
+				Title:       legacyInstance.Title,
+				DisplayName: legacyInstance.DisplayName,
+				Path:        legacyInstance.Path,
+				Branch:      legacyInstance.Branch,
+				Status:      Status(legacyInstance.Status),
+				Height:      legacyInstance.Height,
+				Width:       legacyInstance.Width,
+				CreatedAt:   legacyInstance.CreatedAt,
+				UpdatedAt:   legacyInstance.UpdatedAt,
+				AutoYes:     legacyInstance.AutoYes,
+				Program:     legacyInstance.Program,
+				Worktree: GitWorktreeData{
+					RepoPath:      legacyInstance.Worktree.RepoPath,
+					WorktreePath:  legacyInstance.Worktree.WorktreePath,
+					SessionName:   legacyInstance.Worktree.SessionName,
+					BranchName:    legacyInstance.Worktree.BranchName,
+					BaseCommitSHA: legacyInstance.Worktree.BaseCommitSHA,
+				},
+				DiffStats: DiffStatsData{
+					Added:   legacyInstance.DiffStats.Added,
+					Removed: legacyInstance.DiffStats.Removed,
+					Content: legacyInstance.DiffStats.Content,
+				},
+			}
+		}
+
+		// Save instances to project storage
+		if err := projectStorage.SaveInstances(currentInstances); err != nil {
+			log.ErrorLog.Printf("[MIGRATION] Failed to save instances for project %s: %v", projectID, err)
+			continue
+		}
+
+		// Update instance count
+		if err := im.globalManager.UpdateProjectInstanceCount(projectID, len(instances)); err != nil {
+			log.ErrorLog.Printf("[MIGRATION] Failed to update instance count for project %s: %v", projectID, err)
+			continue
+		}
+
+		log.InfoLog.Printf("[MIGRATION] Successfully migrated %d instances to project %s (%s)", len(instances), projectName, projectID)
+	}
+
+	log.InfoLog.Printf("[MIGRATION] Migration completed successfully")
 	return im.globalManager.MigrateLegacyState(legacyInstancesData)
 }
 

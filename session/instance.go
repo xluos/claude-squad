@@ -57,6 +57,8 @@ type Instance struct {
 	AutoYes bool
 	// Prompt is the initial prompt to pass to the instance on startup
 	Prompt string
+	// ProjectID is the ID of the project this instance belongs to
+	ProjectID string
 
 	// DiffStats stores the current git diff statistics
 	diffStats *git.DiffStats
@@ -136,6 +138,18 @@ func FromInstanceData(data InstanceData) (*Instance, error) {
 		},
 	}
 
+	// Try to extract project ID from worktree path if available
+	if data.Worktree.WorktreePath != "" {
+		// Extract project ID from worktree path: .../projects/{project_id}/worktrees/...
+		parts := filepath.SplitList(data.Worktree.WorktreePath)
+		for i, part := range parts {
+			if part == "projects" && i+1 < len(parts) {
+				instance.ProjectID = parts[i+1]
+				break
+			}
+		}
+	}
+
 	// Backward compatibility: if DisplayName is empty, use Title
 	if instance.DisplayName == "" {
 		instance.DisplayName = instance.Title
@@ -161,6 +175,8 @@ type InstanceOptions struct {
 	Path string
 	// Program is the program to run in the instance (e.g. "claude", "aider --model ollama_chat/gemma3:1b")
 	Program string
+	// ProjectID is the ID of the project this instance belongs to
+	ProjectID string
 	// If AutoYes is true, then
 	AutoYes bool
 }
@@ -180,6 +196,7 @@ func NewInstance(opts InstanceOptions) (*Instance, error) {
 		Status:      Ready,
 		Path:        absPath,
 		Program:     opts.Program,
+		ProjectID:   opts.ProjectID,
 		Height:      0,
 		Width:       0,
 		CreatedAt:   t,
@@ -220,10 +237,22 @@ func (i *Instance) Start(firstTimeSetup bool) error {
 	i.tmuxSession = tmuxSession
 
 	if firstTimeSetup {
-		log.InfoLog.Printf("[PERF] Starting git worktree creation for '%s'", i.Title)
+		log.InfoLog.Printf("[PERF] Starting git worktree creation for '%s' (ProjectID: %s)", i.Title, i.ProjectID)
 		startGit := time.Now()
 
-		gitWorktree, branchName, err := git.NewGitWorktree(i.Path, i.Title)
+		var gitWorktree *git.GitWorktree
+		var branchName string
+		var err error
+
+		if i.ProjectID != "" {
+			log.InfoLog.Printf("[PERF] Using project-specific worktree creation for project %s", i.ProjectID)
+			// Use project-specific worktree creation
+			gitWorktree, branchName, err = git.NewGitWorktreeForProject(i.Path, i.Title, i.ProjectID)
+		} else {
+			log.InfoLog.Printf("[PERF] Using legacy worktree creation (no project ID)")
+			// Fallback to legacy worktree creation
+			gitWorktree, branchName, err = git.NewGitWorktree(i.Path, i.Title)
+		}
 
 		elapsedGit := time.Since(startGit)
 		log.InfoLog.Printf("[PERF] Git worktree creation completed in %v (error: %v)", elapsedGit, err)
@@ -233,6 +262,7 @@ func (i *Instance) Start(firstTimeSetup bool) error {
 		}
 		i.gitWorktree = gitWorktree
 		i.Branch = branchName
+		log.InfoLog.Printf("[PERF] Git worktree created at path: %s", gitWorktree.GetWorktreePath())
 	}
 
 	// Setup error handler to cleanup resources on any error
