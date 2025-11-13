@@ -116,6 +116,36 @@ func (pm *ProjectInstanceManager) GetInstance(title string) (*Instance, error) {
 	return nil, fmt.Errorf("instance not found: %s", title)
 }
 
+// SaveInstance saves an instance to storage (creates if new, updates if existing)
+func (pm *ProjectInstanceManager) SaveInstance(instance *Instance) error {
+	if !instance.Started() {
+		return fmt.Errorf("cannot save instance that has not been started")
+	}
+
+	instanceData := instance.ToInstanceData()
+
+	// Check if instance already exists
+	_, existingErr := pm.GetInstance(instance.Title)
+	if existingErr != nil {
+		// Instance doesn't exist, add it
+		if addErr := pm.projectStorage.AddInstance(instanceData); addErr != nil {
+			return fmt.Errorf("failed to add new instance: %w", addErr)
+		}
+		// Update instance count
+		instances, _ := pm.GetAllInstances()
+		if updateErr := pm.globalManager.UpdateProjectInstanceCount(pm.projectID, len(instances)); updateErr != nil {
+			log.WarningLog.Printf("Failed to update project instance count: %v", updateErr)
+		}
+	} else {
+		// Instance exists, update it
+		if updateErr := pm.projectStorage.UpdateInstance(instanceData); updateErr != nil {
+			return fmt.Errorf("failed to update instance: %w", updateErr)
+		}
+	}
+
+	return nil
+}
+
 // UpdateInstance updates an existing instance
 func (pm *ProjectInstanceManager) UpdateInstance(instance *Instance) error {
 	if !instance.Started() {
@@ -315,6 +345,13 @@ func (im *InstanceManager) MigrateLegacyState(legacyInstancesData json.RawMessag
 	for repoPath, instances := range projectsByRepo {
 		projectID := config.GenerateProjectID(repoPath)
 		projectName := filepath.Base(repoPath)
+
+		// Check if project already exists - if so, skip migration for this project
+		existingProject, err := im.globalManager.GetProject(projectID)
+		if err == nil && existingProject != nil {
+			log.InfoLog.Printf("[MIGRATION] Project %s (%s) already exists, skipping migration to avoid overwriting data", projectName, projectID)
+			continue
+		}
 
 		log.InfoLog.Printf("[MIGRATION] Processing project %s (%s) with %d instances", projectName, projectID, len(instances))
 

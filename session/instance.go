@@ -451,6 +451,10 @@ func (i *Instance) Pause() error {
 
 	// Store original status to restore on failure
 	originalStatus := i.Status
+
+	// Set loading status to show spinner during pause operation
+	i.SetStatus(Translating)
+
 	var errs []error
 
 	// Check if there are any changes to commit
@@ -516,9 +520,29 @@ func (i *Instance) Resume() error {
 		return fmt.Errorf("cannot resume instance that has not been started")
 	}
 
+	// Store original status for error recovery
+	originalStatus := i.Status
+
+	// Set loading status to show spinner during resume operation
+	i.SetStatus(Translating)
+
+	// Execute resume logic with proper error handling
+	err := i.doResume()
+
+	if err != nil {
+		// Restore original status on error
+		i.SetStatus(originalStatus)
+		return err
+	}
+
+	return nil
+}
+
+// doResume contains the actual resume logic
+func (i *Instance) doResume() error {
 	// Allow resuming from Paused or Error status
 	// Also detect inconsistent state and provide helpful error messages
-	if i.Status != Paused && i.Status != Error {
+	if i.Status != Translating && i.Status != Paused && i.Status != Error {
 		// Check if we're in an inconsistent state that might be recoverable
 		worktreeExists := false
 		if _, err := os.Stat(i.gitWorktree.GetWorktreePath()); err == nil {

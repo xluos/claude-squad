@@ -314,7 +314,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Save after adding new instance
 			instances := m.list.GetInstances()
 			for _, instance := range instances {
-				if err := m.projectManager.UpdateInstance(instance); err != nil {
+				if err := m.projectManager.SaveInstance(instance); err != nil {
 					log.ErrorLog.Printf("Failed to save instance %s: %v", instance.Title, err)
 				}
 			}
@@ -328,7 +328,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Save after adding new instance
 			instances = m.list.GetInstances()
 			for _, instance := range instances {
-				if err := m.projectManager.UpdateInstance(instance); err != nil {
+				if err := m.projectManager.SaveInstance(instance); err != nil {
 					log.ErrorLog.Printf("Failed to save instance %s: %v", instance.Title, err)
 				}
 			}
@@ -360,7 +360,7 @@ func (m *home) handleQuit() (tea.Model, tea.Cmd) {
 	// Save all instances for current project
 	instances := m.list.GetInstances()
 	for _, instance := range instances {
-		if err := m.projectManager.UpdateInstance(instance); err != nil {
+		if err := m.projectManager.SaveInstance(instance); err != nil {
 			log.ErrorLog.Printf("Failed to save instance %s: %v", instance.Title, err)
 		}
 	}
@@ -463,7 +463,7 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 			// Save after adding new instance
 			instances := m.list.GetInstances()
 			for _, instance := range instances {
-				if err := m.projectManager.UpdateInstance(instance); err != nil {
+				if err := m.projectManager.SaveInstance(instance); err != nil {
 					log.ErrorLog.Printf("Failed to save instance %s: %v", instance.Title, err)
 				}
 			}
@@ -476,7 +476,7 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 			// Save after adding new instance
 			instances = m.list.GetInstances()
 			for _, instance := range instances {
-				if err := m.projectManager.UpdateInstance(instance); err != nil {
+				if err := m.projectManager.SaveInstance(instance); err != nil {
 					log.ErrorLog.Printf("Failed to save instance %s: %v", instance.Title, err)
 				}
 			}
