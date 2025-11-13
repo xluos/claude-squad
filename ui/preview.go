@@ -69,6 +69,15 @@ func (p *PreviewPane) Reset() {
 	p.viewport.GotoTop()
 }
 
+// ForceRefresh强制刷新预览内容，忽略状态缓存
+func (p *PreviewPane) ForceRefresh(instance *session.Instance) error {
+	// 清除所有状态缓存
+	p.previewState = previewState{}
+	p.isScrolling = false
+	// 重新获取内容
+	return p.UpdateContent(instance)
+}
+
 // HasError returns true if the preview is in an error state
 func (p *PreviewPane) HasError() bool {
 	return p.previewState.hasError
@@ -81,6 +90,15 @@ func (p *PreviewPane) UpdateContent(instance *session.Instance) error {
 		p.setFallbackState("No agents running yet. Spin up a new instance with 'n' to get started!")
 		return nil
 	case instance.Status == session.Paused:
+		// 智能检测：即使状态为Paused，也尝试获取内容以验证实际状态
+		content, err := instance.Preview()
+		if err == nil && content != "" {
+			// 实例实际上正在运行，内容可获取，可能是状态同步问题
+			p.previewState = previewState{fallback: false, text: "", hasError: false}
+			p.viewport.SetContent(content)
+			return nil
+		}
+		// 确实处于暂停状态，显示暂停信息
 		p.setFallbackState(lipgloss.JoinVertical(lipgloss.Center,
 			"Session is paused. Press 'r' to resume.",
 			"",

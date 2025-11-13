@@ -680,32 +680,9 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 
 		// Create the kill action as a tea.Cmd
 		killAction := func() tea.Msg {
-			// Get worktree and check if branch is checked out
-			worktree, err := selected.GetGitWorktree()
-			if err != nil {
+			if err := m.deleteInstance(selected); err != nil {
 				return err
 			}
-
-			checkedOut, err := worktree.IsBranchCheckedOut()
-			if err != nil {
-				return err
-			}
-
-			if checkedOut {
-				displayName := selected.DisplayName
-				if displayName == "" {
-					displayName = selected.Title
-				}
-				return fmt.Errorf("instance %s is currently checked out", displayName)
-			}
-
-			// Delete from storage first
-			if err := m.projectManager.DeleteInstance(selected.Title); err != nil {
-				return err
-			}
-
-			// Then kill the instance
-			m.list.Kill()
 			return instanceChangedMsg{}
 		}
 
@@ -770,6 +747,70 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 			return m, m.handleError(err)
 		}
 		return m, tea.WindowSize()
+	case keys.KeyApply:
+		selected := m.list.GetSelectedInstance()
+		if selected == nil {
+			return m, nil
+		}
+
+		// Create the apply action as a tea.Cmd
+		applyAction := func() tea.Msg {
+			// Step 1: Get the worktree to access repo path and current branch
+			worktree, err := selected.GetGitWorktree()
+			if err != nil {
+				return fmt.Errorf("failed to get worktree: %w", err)
+			}
+
+			// Get current branch from repo path directly (this is where we'll merge to)
+			targetBranch, err := worktree.GetCurrentBranch()
+			if err != nil {
+				return fmt.Errorf("failed to get current branch from repo: %w", err)
+			}
+
+			// Step 2: First, commit any changes in the instance worktree
+			// This ensures instance changes are committed to the instance branch before squash merge
+			if dirty, err := worktree.IsDirty(); err != nil {
+				return fmt.Errorf("failed to check if worktree is dirty: %w", err)
+			} else if dirty {
+				// Commit changes in instance worktree (similar to Pause logic but don't remove worktree yet)
+				commitMsg := fmt.Sprintf("[claude-squad] update from '%s' on %s (before apply)", selected.Title, time.Now().Format(time.RFC822))
+				if err := worktree.CommitChanges(commitMsg); err != nil {
+					return fmt.Errorf("failed to commit instance changes: %w", err)
+				}
+			}
+
+			// Step 3: Perform squash merge from instance branch to target branch
+			if err := worktree.SquashMerge(targetBranch); err != nil {
+				return fmt.Errorf("failed to squash merge during apply: %w", err)
+			}
+
+			// Step 4: Commit the squash merge changes
+			squashCommitMsg := fmt.Sprintf("[claude-squad] squash merge from '%s' on %s", selected.Title, time.Now().Format(time.RFC822))
+			if err := worktree.CommitSquashMerge(squashCommitMsg); err != nil {
+				return fmt.Errorf("failed to commit squash merge: %w", err)
+			}
+
+			// Step 5: Perform the "checkout" operation - same as KeyCheckout
+			// This will: save changes, detach tmux, remove worktree, but keep branch
+			if err := selected.Pause(); err != nil {
+				return fmt.Errorf("failed to pause instance during apply: %w", err)
+			}
+
+			// Step 6: Apply successful, now delete the instance (reusing D key logic)
+			if err := m.deleteInstance(selected); err != nil {
+				return fmt.Errorf("apply succeeded but failed to delete instance: %w", err)
+			}
+
+			return instanceChangedMsg{}
+		}
+
+		// Show confirmation modal
+		displayName := selected.DisplayName
+		if displayName == "" {
+			displayName = selected.Title
+		}
+		message := fmt.Sprintf("[!] Apply session '%s' (checkout + squash merge)?", displayName)
+		return m, m.confirmAction(message, applyAction)
 	case keys.KeyEnter:
 		if m.list.NumInstances() == 0 {
 			return m, nil
@@ -861,6 +902,37 @@ type instanceStartCompleteMsg struct {
 var tickUpdateMetadataCmd = func() tea.Msg {
 	time.Sleep(500 * time.Millisecond)
 	return tickUpdateMetadataMessage{}
+}
+
+// deleteInstance deletes an instance and removes it from the list
+func (m *home) deleteInstance(instance *session.Instance) error {
+	// Get worktree and check if branch is checked out
+	worktree, err := instance.GetGitWorktree()
+	if err != nil {
+		return err
+	}
+
+	checkedOut, err := worktree.IsBranchCheckedOut()
+	if err != nil {
+		return err
+	}
+
+	if checkedOut {
+		displayName := instance.DisplayName
+		if displayName == "" {
+			displayName = instance.Title
+		}
+		return fmt.Errorf("instance %s is currently checked out", displayName)
+	}
+
+	// Delete from storage first
+	if err := m.projectManager.DeleteInstance(instance.Title); err != nil {
+		return err
+	}
+
+	// Then kill the instance
+	m.list.Kill()
+	return nil
 }
 
 // handleError handles all errors which get bubbled up to the app. sets the error message. We return a callback tea.Cmd that returns a hideErrMsg message

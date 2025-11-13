@@ -446,7 +446,9 @@ func (i *Instance) Pause() error {
 		return fmt.Errorf("cannot pause instance that has not been started")
 	}
 	if i.Status == Paused {
-		return fmt.Errorf("instance is already paused")
+		// 幂等性：如果已经是暂停状态，直接返回成功
+		log.InfoLog.Printf("Instance %s is already paused, skipping pause operation", i.Title)
+		return nil
 	}
 
 	// Store original status to restore on failure
@@ -723,4 +725,53 @@ func (i *Instance) SendKeys(keys string) error {
 		return fmt.Errorf("cannot send keys to instance that has not been started or is paused")
 	}
 	return i.tmuxSession.SendKeys(keys)
+}
+
+// Apply performs checkout (pause) and then squash merge to the original branch
+func (i *Instance) Apply(targetBranch string) error {
+	if !i.started {
+		return fmt.Errorf("cannot apply instance that has not been started")
+	}
+
+	// Step 1: Perform checkout (pause) operation
+	if err := i.Pause(); err != nil {
+		return fmt.Errorf("failed to pause instance during apply: %w", err)
+	}
+
+	// Step 2: Perform squash merge to target branch
+	if err := i.gitWorktree.SquashMerge(targetBranch); err != nil {
+		return fmt.Errorf("failed to squash merge during apply: %w", err)
+	}
+
+	return nil
+}
+
+// VerifyStateConsistency 验证实例状态的一致性，如果不一致则进行修复
+func (i *Instance) VerifyStateConsistency() error {
+	worktreeExists := false
+	if _, err := os.Stat(i.gitWorktree.GetWorktreePath()); err == nil {
+		worktreeExists = true
+	}
+	tmuxExists := i.tmuxSession.DoesSessionExist()
+
+	// 检测状态不一致的情况
+	if i.Status == Paused && (worktreeExists || tmuxExists) {
+		// 状态为暂停但工作树或tmux仍存在，可能是恢复操作未完全完成
+		log.InfoLog.Printf("Detected inconsistent state: status=Paused but worktree=%v, tmux=%v", worktreeExists, tmuxExists)
+		if worktreeExists && tmuxExists {
+			// 两个都存在，可能是状态同步问题，设置为运行状态
+			i.SetStatus(Running)
+			log.InfoLog.Printf("Fixed inconsistent state: changed status to Running")
+		}
+	} else if i.Status == Running && (!worktreeExists || !tmuxExists) {
+		// 状态为运行但组件缺失，可能是暂停操作未完全完成
+		log.InfoLog.Printf("Detected inconsistent state: status=Running but worktree=%v, tmux=%v", worktreeExists, tmuxExists)
+		if !worktreeExists && !tmuxExists {
+			// 两个都不存在，设置为暂停状态
+			i.SetStatus(Paused)
+			log.InfoLog.Printf("Fixed inconsistent state: changed status to Paused")
+		}
+	}
+
+	return nil
 }

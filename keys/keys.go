@@ -24,6 +24,7 @@ const (
 	KeyResume
 	KeyPrompt // New key for entering a prompt
 	KeyHelp   // Key for showing help screen
+	KeyApply  // Key for apply command (checkout + squash merge)
 
 	// Diff keybindings
 	KeyShiftUp
@@ -49,6 +50,7 @@ var GlobalKeyStringsMap = map[string]KeyName{
 	"r":          KeyResume,
 	"p":          KeySubmit,
 	"?":          KeyHelp,
+	"a":          KeyApply,
 }
 
 // GlobalkeyBindings is a global, immutable map of KeyName tot keybinding.
@@ -77,13 +79,13 @@ var GlobalkeyBindings = map[KeyName]key.Binding{
 		key.WithKeys("n"),
 		key.WithHelp("n", "new"),
 	),
-	KeyKill: key.NewBinding(
-		key.WithKeys("D"),
-		key.WithHelp("D", "kill"),
-	),
 	KeyHelp: key.NewBinding(
 		key.WithKeys("?"),
 		key.WithHelp("?", "help"),
+	),
+	KeyKill: key.NewBinding(
+		key.WithKeys("D"),
+		key.WithHelp("D", "kill"),
 	),
 	KeyQuit: key.NewBinding(
 		key.WithKeys("q"),
@@ -108,6 +110,10 @@ var GlobalkeyBindings = map[KeyName]key.Binding{
 	KeyResume: key.NewBinding(
 		key.WithKeys("r"),
 		key.WithHelp("r", "resume"),
+	),
+	KeyApply: key.NewBinding(
+		key.WithKeys("a"),
+		key.WithHelp("a", "apply"),
 	),
 
 	// -- Special keybindings --

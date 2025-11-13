@@ -121,6 +121,15 @@ func (g *GitWorktree) IsBranchCheckedOut() (bool, error) {
 	return strings.TrimSpace(string(output)) == g.branchName, nil
 }
 
+// GetCurrentBranch returns the name of the currently checked out branch
+func (g *GitWorktree) GetCurrentBranch() (string, error) {
+	output, err := g.runGitCommand(g.repoPath, "branch", "--show-current")
+	if err != nil {
+		return "", fmt.Errorf("failed to get current branch: %w", err)
+	}
+	return strings.TrimSpace(string(output)), nil
+}
+
 // OpenBranchURL opens the branch URL in the default browser
 func (g *GitWorktree) OpenBranchURL() error {
 	// Check if GitHub CLI is available
@@ -133,5 +142,36 @@ func (g *GitWorktree) OpenBranchURL() error {
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("failed to open branch URL: %w", err)
 	}
+	return nil
+}
+
+// SquashMerge performs a squash merge from the worktree branch to the target branch
+func (g *GitWorktree) SquashMerge(targetBranch string) error {
+	// First, ensure we're on the target branch
+	if _, err := g.runGitCommand(g.repoPath, "checkout", targetBranch); err != nil {
+		return fmt.Errorf("failed to checkout target branch %s: %w", targetBranch, err)
+	}
+
+	// Perform squash merge
+	if _, err := g.runGitCommand(g.repoPath, "merge", "--squash", g.branchName); err != nil {
+		return fmt.Errorf("failed to squash merge from %s: %w", g.branchName, err)
+	}
+
+	return nil
+}
+
+// CommitSquashMerge commits the squash merge changes
+func (g *GitWorktree) CommitSquashMerge(commitMessage string) error {
+	// Check if there are staged changes from squash merge
+	if _, err := g.runGitCommand(g.repoPath, "diff", "--cached", "--quiet"); err == nil {
+		// No staged changes, nothing to commit
+		return nil
+	}
+
+	// Commit the squash merge changes
+	if _, err := g.runGitCommand(g.repoPath, "commit", "-m", commitMessage); err != nil {
+		return fmt.Errorf("failed to commit squash merge: %w", err)
+	}
+
 	return nil
 }
