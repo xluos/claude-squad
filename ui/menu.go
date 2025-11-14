@@ -155,18 +155,45 @@ func (m *Menu) SetSize(width, height int) {
 	m.height = height
 }
 
+// calculateGroupBoundaries 动态计算各组的边界
+func (m *Menu) calculateGroupBoundaries() []struct{ start, end int } {
+	if len(m.options) == 0 {
+		return []struct{ start, end int }{{0, 0}}
+	}
+
+	// 实例管理组：固定2个元素 (n, d)
+	instanceGroupEnd := 2
+	if instanceGroupEnd > len(m.options) {
+		instanceGroupEnd = len(m.options)
+	}
+
+	// 系统组：以KeyTab为标识符
+	systemGroupStart := -1
+	for i := instanceGroupEnd; i < len(m.options); i++ {
+		if m.options[i] == keys.KeyTab {
+			systemGroupStart = i
+			break
+		}
+	}
+
+	// 动作组：在实例管理组和系统组之间
+	actionGroupEnd := len(m.options)
+	if systemGroupStart != -1 {
+		actionGroupEnd = systemGroupStart
+	}
+
+	return []struct{ start, end int }{
+		{0, instanceGroupEnd},           // 实例管理组
+		{instanceGroupEnd, actionGroupEnd}, // 动作组（动态大小）
+		{actionGroupEnd, len(m.options)},  // 系统组
+	}
+}
+
 func (m *Menu) String() string {
 	var s strings.Builder
 
-	// Define group boundaries
-	groups := []struct {
-		start int
-		end   int
-	}{
-		{0, 2}, // Instance management group (n, d)
-		{2, 6}, // Action group (enter, submit, checkout, apply/resume)
-		{7, 9}, // System group (tab, help, q)
-	}
+	// Calculate group boundaries dynamically
+	groups := m.calculateGroupBoundaries()
 
 	for i, k := range m.options {
 		binding := keys.GlobalkeyBindings[k]
